@@ -150,9 +150,8 @@ ZEND_RSRC_DTOR_FUNC(_php_event_dtor) /* {{{ */
 		--event->base->events;
 	}
 	if (Z_TYPE_P(&event->stream_id) != IS_NULL) {
-		zend_list_close(Z_RES_P(&event->stream_id));
+		zend_list_delete(Z_RES_P(&event->stream_id));
 	}
-	zval_ptr_dtor(&event->stream_id);
 
 	_php_event_callback_free(event->callback);
 
@@ -602,7 +601,7 @@ static PHP_FUNCTION(event_free)
 	}
 
 	event_del (event->event);
-	zend_list_close(Z_RES_P(event->rsrc_id));
+	zend_list_delete(Z_RES_P(event->rsrc_id));
 
 }
 /* }}} */
@@ -669,7 +668,11 @@ static PHP_FUNCTION(event_set)
 	if (!(event = ZVAL_TO_EVENT(zevent)))
 		RETURN_FALSE;
 
-	if (events & EV_SIGNAL) {
+	if (events & EV_TIMEOUT) {
+		file_desc = -1;
+		fd = 0;
+		events = 0;
+	} else if (events & EV_SIGNAL) {
 		/* signal support */
 		convert_to_long_ex(fd);
 		file_desc = Z_LVAL_P(fd);
@@ -678,6 +681,15 @@ static PHP_FUNCTION(event_set)
 			RETURN_FALSE;
 		}
 	} else {
+
+		if (Z_TYPE_P(fd) == IS_LONG) {
+			fd = zend_hash_index_find(&EG(regular_list), Z_RES_P(fd));
+			if (!fd) {
+				php_error_docref(NULL, E_WARNING, "invalid file descriptor passed");
+				RETURN_FALSE;
+			}
+		}
+
 		if (Z_TYPE_P(fd) == IS_RESOURCE) {
 			stream = zend_fetch_resource2_ex(fd, NULL, php_file_le_stream(), php_file_le_pstream());
 			if (stream) {
@@ -697,12 +709,6 @@ static PHP_FUNCTION(event_set)
 				php_error_docref(NULL, E_WARNING, "fd argument must be valid PHP stream resource");
 				RETURN_FALSE;
 #endif
-			}
-		} else if (Z_TYPE_P(fd) == IS_LONG) {
-			file_desc = Z_RES_P(fd);
-			if (!file_desc) {
-				php_error_docref(NULL, E_WARNING, "invalid file descriptor passed");
-				RETURN_FALSE;
 			}
 		} else {
 #ifdef LIBEVENT_SOCKETS_SUPPORT
@@ -731,7 +737,13 @@ static PHP_FUNCTION(event_set)
 
 	old_callback = event->callback;
 	event->callback = callback;
-	if (events & EV_SIGNAL) {
+
+	if (!fd) {
+		if (Z_TYPE_P(&event->stream_id) != IS_NULL) {
+			zend_list_close(Z_RES_P(&event->stream_id));
+			ZVAL_NULL(&event->stream_id);
+		}
+        } else if (events & EV_SIGNAL) {
 		ZVAL_NULL(&event->stream_id);
 	} else {
 		ZVAL_COPY(&event->stream_id, fd);
@@ -743,7 +755,7 @@ static PHP_FUNCTION(event_set)
 		_php_event_callback_free(old_callback);
 	}
 
-	if (event->base) {
+	if (fd && event->base) {
 		ret = event_base_set(event->base->base, event->event);
 		if (ret != 0) {
 			RETURN_FALSE;
@@ -908,6 +920,14 @@ static PHP_FUNCTION(event_buffer_new)
 	if (zend_parse_parameters(ZEND_NUM_ARGS(), "zzzz|z", &zfd, &zreadcb, &zwritecb, &zerrorcb, &zarg) != SUCCESS) {
 		return;
 	}
+
+	if (Z_TYPE_P(zfd) == IS_LONG) {
+		zfd = zend_hash_index_find(&EG(regular_list), Z_RES_P(zfd));
+		if (!zfd) {
+			php_error_docref(NULL, E_WARNING, "invalid file descriptor passed");
+			RETURN_FALSE;
+		}
+	}
 	
 	if (Z_TYPE_P(zfd) == IS_RESOURCE) {
 		stream = zend_fetch_resource2_ex(zfd, NULL, php_file_le_stream(), php_file_le_pstream());
@@ -928,12 +948,6 @@ static PHP_FUNCTION(event_buffer_new)
 			php_error_docref(NULL, E_WARNING, "fd argument must be valid PHP stream resource or a file descriptor of type long");
 			RETURN_FALSE;
 #endif
-		}
-	} else if (Z_TYPE_P(zfd) == IS_LONG) {
-		fd = Z_RES_P(zfd);
-		if (!fd) {
-			php_error_docref(NULL, E_WARNING, "invalid file descriptor passed");
-			RETURN_FALSE;
 		}
 	} else {
 #ifdef LIBEVENT_SOCKETS_SUPPORT
@@ -1283,6 +1297,14 @@ static PHP_FUNCTION(event_buffer_fd_set)
 	if(!(bevent= ZVAL_TO_BEVENT(zbevent)))
 		RETURN_FALSE;
 
+	if (Z_TYPE_P(zfd) == IS_LONG) {
+		zfd = zend_hash_index_find(&EG(regular_list), Z_RES_P(zfd));
+		if (!zfd) {
+			php_error_docref(NULL, E_WARNING, "invalid file descriptor passed");
+			RETURN_FALSE;
+		}
+	}
+
 	if (Z_TYPE_P(zfd) == IS_RESOURCE) {
 		stream = zend_fetch_resource2_ex(zfd, NULL, php_file_le_stream(), php_file_le_pstream());
 		if (stream) {
@@ -1302,12 +1324,6 @@ static PHP_FUNCTION(event_buffer_fd_set)
 			php_error_docref(NULL, E_WARNING, "fd argument must be valid PHP stream resource or a file descriptor of type long");
 			RETURN_FALSE;
 #endif
-		}
-	} else if (Z_TYPE_P(zfd) == IS_LONG) {
-		fd = Z_RES_P(zfd);
-		if (!fd) {
-			php_error_docref(NULL, E_WARNING, "invalid file descriptor passed");
-			RETURN_FALSE;
 		}
 	} else {
 #ifdef LIBEVENT_SOCKETS_SUPPORT
